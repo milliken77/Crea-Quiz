@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+	<meta charset="UTF-8">
+	<meta name="viewport" content="width=device-width, initial-scale=1.0">
+	<title>Generatore di Quiz</title>
+	<!-- Libreria docx.js per generare file DOCX -->
+	<script src="https://unpkg.com/docx@7.3.0/build/index.js"></script>
+	<!-- Libreria FileSaver.js per scaricare i file -->
+	<script src="https://unpkg.com/file-saver/dist/FileSaver.min.js"></script>
+	<!-- Libreria exceljs per generare file XLSX con formattazione condizionale -->
+	<script src="https://unpkg.com/exceljs@4.3.0/dist/exceljs.min.js"></script>
+	<style>
+		body {
+			font-family: 'Arial', sans-serif;
+			background: linear-gradient(135deg, #e0f7fa, #b2ebf2);
+			margin: 0;
+			padding: 20px;
+			color: #333;
+		}
+		h1 {
+			text-align: center;
+			color: #00796b;
+			font-size: 2.5em;
+			margin-bottom: 20px;
+		}
+		form {
+			max-width: 700px;
+			margin: 0 auto;
+			background: #ffffff;
+			padding: 25px;
+			border-radius: 10px;
+			box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+		}
+		label {
+			display: block;
+			margin-bottom: 8px;
+			font-weight: bold;
+			color: #004d40;
+		}
+		textarea, input[type="text"], input[type="number"] {
+			width: 100%;
+			padding: 10px;
+			margin-bottom: 15px;
+			border: 2px solid #b0bec5;
+			border-radius: 5px;
+			box-sizing: border-box;
+			font-size: 1em;
+			transition: border-color 0.3s ease;
+		}
+		textarea:focus, input[type="text"]:focus, input[type="number"]:focus {
+			border-color: #00796b;
+			outline: none;
+		}
+		button {
+			width: 100%;
+			padding: 12px;
+			background-color: #00796b;
+			color: white;
+			border: none;
+			border-radius: 5px;
+			font-size: 1.2em;
+			cursor: pointer;
+			transition: background-color 0.3s ease;
+		}
+		button:hover {
+			background-color: #004d40;
+		}
+		@media (max-width: 600px) {
+			body {
+				padding: 10px;
+			}
+			h1 {
+				font-size: 1.8em;
+			}
+			form {
+				padding: 15px;
+			}
+			textarea, input[type="text"], input[type="number"], button {
+				font-size: 0.9em;
+			}
+		}
+	</style>
+</head>
+<body>
+	<h1>Generatore di Quiz</h1>
+	<form id="quizForm">
+		<label for="domandeText">Testo delle domande (formato: #domanda, *risposta corretta):</label>
+		<textarea id="domandeText" name="domandeText" rows="10" cols="50" placeholder="Esempio:
+#Qual è la capitale dell'Italia?
+*Roma
+Milano
+Napoli
+#Quanto fa 2+2?
+*4
+3
+5"></textarea>
+		<label for="versioni">Numero di versioni:</label>
+		<input type="number" id="versioni" name="versioni" value="1" min="1">
+		<label for="numero">Numero di domande per quiz:</label>
+		<input type="number" id="numero" name="numero" value="10" min="1">
+		<label for="outputDocx">Nome file DOCX:</label>
+		<input type="text" id="outputDocx" name="outputDocx" value="quiz.docx">
+		<label for="outputXlsx">Nome file XLSX:</label>
+		<input type="text" id="outputXlsx" name="outputXlsx" value="correttore.xlsx">
+		<label for="intestazioneDocx">Intestazione Docx:</label>
+		<input type="text" id="intestazioneDocx" name="intestazioneDocx" value="Quiz di Prova">
+		<button type="submit">Genera</button>
+	</form>
+
+	<script>
+		// --- UTILITÀ ---
+		function getColumnLetter(colIndex) {
+			let letter = '';
+			while (colIndex > 0) {
+				const remainder = (colIndex - 1) % 26;
+				letter = String.fromCharCode(65 + remainder) + letter;
+				colIndex = Math.floor((colIndex - 1) / 26);
+			}
+			return letter;
+		}
+
+		function shuffleArray(array) {
+			for (let i = array.length - 1; i > 0; i--) {
+				const j = Math.floor(Math.random() * (i + 1));
+				[array[i], array[j]] = [array[j], array[i]];
+			}
+			return array;
+		}
+
+		function shuffleWithAnswers(domande, risposte) {
+			const indices = Array.from({ length: domande.length }, (_, i) => i);
+			const shuffledIndices = shuffleArray(indices);
+			const shuffledDomande = shuffledIndices.map(i => domande[i]);
+			const shuffledRisposte = shuffledIndices.map(i => risposte[i]);
+			return { domande: shuffledDomande, risposte: shuffledRisposte };
+		}
+
+		function creaQuiz(domandeText, versioni, numero) {
+			const completo = domandeText.split('\n').map(line => line.trim()).filter(line => line !== '');
+			let domande = [];
+			let risposte = [];
+			let lista = [];
+
+			completo.forEach(i => {
+				if (i[0] === '#') {
+					if (lista.length > 0) {
+						risposte.push(lista);
+					}
+					domande.push(i);
+					lista = [];
+				} else {
+					lista.push(i);
+				}
+			});
+			if (lista.length > 0) {
+				risposte.push(lista);
+			}
+
+			if (domande.length !== risposte.length) {
+				console.error("Errore: Il numero di domande e gruppi di risposte non corrisponde.");
+				return { quizzes: [], correttori: [] };
+			}
+
+			const result = [];
+			const correttori = [];
+			for (let i = 0; i < versioni; i++) {
+				const correttore = [];
+				const shuffled = shuffleWithAnswers(domande, risposte);
+				let tot = 0;
+				let quizText = `Compito n° ${i + 1}\n\n`;
+				for (let j = 0; j < Math.min(numero, shuffled.domande.length); j++) {
+					if (!Array.isArray(shuffled.risposte[j])) {
+						console.error(`Errore: shuffled.risposte[${j}] non è un array`, shuffled.risposte[j]);
+						continue;
+					}
+					const shuffledRisposte = shuffleArray([...shuffled.risposte[j]]);
+					quizText += `${tot + 1} - ${shuffled.domande[j].slice(1)}\n`;
+					shuffledRisposte.forEach((k, idx) => {
+						const lettera = String.fromCharCode('A'.charCodeAt(0) + idx);
+						if (k[0] === '*') {
+							correttore.push(lettera);
+							k = k.slice(1);
+						}
+						quizText += `    ${lettera} : ${k}\n`;
+					});
+					tot++;
+				}
+				result.push(quizText);
+				correttori.push(correttore);
+			}
+			return { quizzes: result, correttori };
+		}
+
+		// --- FORMATTING PER IL DOCX ---
+		function createFormattedParagraph(text, bold = false, size) {
+			const parts = [];
+			let lastIndex = 0;
+			const regex = /\^(\d+)/g;
+			let match;
+			while ((match = regex.exec(text)) !== null) {
+				if (match.index > lastIndex) {
+					parts.push(new docx.TextRun({ text: text.substring(lastIndex, match.index), bold, size }));
+				}
+				parts.push(new docx.TextRun({ text: match[1], bold, superScript: true, size }));
+				lastIndex = regex.lastIndex;
+			}
+			if (lastIndex < text.length) {
+				parts.push(new docx.TextRun({ text: text.substring(lastIndex), bold, size }));
+			}
+			return new docx.Paragraph({ children: parts });
+		}
+
+		// Il titolo iniziale (dal campo "intestazione") sarà in dimensione 13
+		function createTitleParagraph(text) {
+			return createFormattedParagraph(text, true, 26);
+		}
+
+		// --- CREAZIONE DEL DOCUMENTO DOCX ---
+		function createWordDocument(quizzes, intestazione) {
+			const sections = quizzes.map((quiz, idx) => {
+				const children = [];
+				// Il titolo iniziale, in dimensione 13
+				children.push(createTitleParagraph(intestazione));
+				children.push(new docx.Paragraph({}));
+				// "Compito n° ..." come testo normale
+				children.push(createFormattedParagraph(`Compito n° ${idx + 1}`));
+				children.push(createFormattedParagraph("Nome: _______________________"));
+				children.push(createFormattedParagraph("Cognome: _______________________"));
+				children.push(createFormattedParagraph("Data: _______________________"));
+				children.push(new docx.Paragraph({}));
+
+				// Le domande (tutte, compresa la prima) vengono lette dal quiz generato.
+				// Saltiamo solo l'header duplicato (la prima riga del quiz).
+				const lines = quiz.split('\n').filter(line => line.trim() !== "");
+				const questionLines = lines.slice(1);
+				questionLines.forEach(line => {
+					if (/^\d+\s*-\s*/.test(line)) {
+						// Inserisce una riga vuota PRIMA della domanda
+						children.push(new docx.Paragraph({}));
+						children.push(createFormattedParagraph(line, true));
+					} else {
+						// Le alternative vengono inserite senza riga vuota
+						children.push(createFormattedParagraph(line));
+					}
+				});
+
+				// Inserisce la griglia di correzione subito dopo l'ultima domanda
+				children.push(new docx.Paragraph({}));
+				children.push(createFormattedParagraph("Griglia di correzione", true));
+				const numDomande = lines.filter(line => /^\d+\s*-\s*/.test(line)).length;
+				const gridRows = [];
+				gridRows.push(new docx.TableRow({
+					children: [
+						new docx.TableCell({ children: [createFormattedParagraph("Domanda", true)] }),
+						new docx.TableCell({ children: [createFormattedParagraph("Risposta", true)] })
+					]
+				}));
+				for (let i = 0; i < numDomande; i++) {
+					gridRows.push(new docx.TableRow({
+						children: [
+							new docx.TableCell({ children: [createFormattedParagraph(String(i + 1))] }),
+							new docx.TableCell({ children: [createFormattedParagraph("")] })
+						]
+					}));
+				}
+				children.push(new docx.Table({ rows: gridRows }));
+				
+				return {
+					properties: { column: { count: 2, space: 708 } },
+					children: children
+				};
+			});
+			return new docx.Document({ sections: sections });
+		}
+
+		async function generateDocxBuffer(doc) {
+			return await docx.Packer.toBlob(doc);
+		}
+
+		// --- CREAZIONE DEL FILE EXCEL CON CORREZIONE ---
+		function createCorrectionSheet(correttori) {
+			const workbook = new ExcelJS.Workbook();
+			workbook.views = [{ activeTab: 1 }];
+			// Crea il foglio "Risposte_Corrette" e lo nasconde al momento della creazione
+			const ws1 = workbook.addWorksheet("Risposte_Corrette", { state: 'hidden' });
+			const ws2 = workbook.addWorksheet("Risposte Studenti");
+
+			const numQuestions = correttori[0].length;
+			// Scheda Risposte_Corrette
+			ws1.addRow(['Numero Compito', ...Array.from({ length: numQuestions }, (_, i) => String(i + 1))]);
+			correttori.forEach((corr, idx) => {
+				ws1.addRow([String(idx + 1), ...corr]);
+			});
+
+			// Scheda Risposte Studenti (colonne visibili)
+			const visibleHeader = ['Numero Compito', 'Nome', 'Cognome', ...Array.from({ length: numQuestions }, (_, i) => String(i + 1)), 'Domande Corrette', 'Voto (%)'];
+			ws2.addRow(visibleHeader);
+			ws2.getRow(1).font = { bold: true };
+
+			const numRows = correttori.length;
+			for (let i = 0; i < numRows; i++) {
+				const row = [String(i + 1), '', ''];
+				for (let q = 0; q < numQuestions; q++) {
+					row.push('');
+				}
+				row.push(''); row.push('');
+				ws2.addRow(row);
+			}
+
+			ws2.eachRow((row) => {
+				row.eachCell((cell) => {
+					cell.alignment = { horizontal: 'center', vertical: 'middle' };
+				});
+			});
+
+			for (let r = 2; r <= numRows + 1; r++) {
+				const formulaParts = [];
+				for (let q = 0; q < numQuestions; q++) {
+					const studentAnswerCell = ws2.getCell(r, 4 + q).address;
+					const correctAnswerCell = `'Risposte_Corrette'!${ws1.getCell(r, 2 + q).address}`;
+					formulaParts.push(`IF(${studentAnswerCell}=${correctAnswerCell}, 1, 0)`);
+				}
+				const countFormula = `SUM(${formulaParts.join(',')})`;
+				ws2.getCell(r, numQuestions + 4).value = { formula: countFormula };
+				ws2.getCell(r, numQuestions + 5).value = { formula: `ROUND((${ws2.getCell(r, numQuestions + 4).address}/${numQuestions})*100, 2)` };
+			}
+
+			// Aggiunge le celle di controllo (hidden) dopo le colonne visibili
+			const hiddenStart = visibleHeader.length + 1; // = numQuestions + 6
+			for (let r = 2; r <= numRows + 1; r++) {
+				for (let q = 0; q < numQuestions; q++) {
+					const studentCellAddr = ws2.getCell(r, 4 + q).address;
+					const hiddenCellAddr = ws2.getCell(r, hiddenStart + q).address;
+					const correctAnswer = correttori[r - 2][q];
+					ws2.getCell(r, hiddenStart + q).value = { formula: `IF(${studentCellAddr}="${correctAnswer}","X","")` };
+					const formula = `${hiddenCellAddr}="X"`;
+					ws2.addConditionalFormatting({
+						ref: studentCellAddr,
+						rules: [{
+							type: 'expression',
+							formulae: [formula],
+							style: {
+								fill: {
+									type: 'pattern',
+									pattern: 'solid',
+									bgColor: { argb: 'FF00FF00' }
+								}
+							}
+						}]
+					});
+				}
+			}
+
+			// Nasconde le colonne di controllo
+			for (let col = hiddenStart; col < hiddenStart + numQuestions; col++) {
+				ws2.getColumn(col).hidden = true;
+			}
+
+			visibleHeader.forEach((_, colIdx) => {
+				let maxLength = 0;
+				for (let r = 1; r <= numRows + 1; r++) {
+					const cell = ws2.getCell(r, colIdx + 1);
+					if (cell.value) {
+						const len = String(cell.value).length;
+						if (len > maxLength) maxLength = len;
+					}
+				}
+				ws2.getColumn(colIdx + 1).width = maxLength + 2;
+			});
+			return workbook;
+		}
+
+		async function generateXlsxBuffer(workbook) {
+			return await workbook.xlsx.writeBuffer();
+		}
+
+		document.getElementById('quizForm').addEventListener('submit', async (e) => {
+			e.preventDefault();
+			const formData = new FormData(e.target);
+			const data = Object.fromEntries(formData.entries());
+			const { quizzes, correttori } = creaQuiz(data.domandeText, parseInt(data.versioni), parseInt(data.numero));
+			const doc = createWordDocument(quizzes, data.intestazioneDocx);
+			const wb = createCorrectionSheet(correttori);
+
+			const docxBlob = await generateDocxBuffer(doc);
+			const xlsxBuffer = await generateXlsxBuffer(wb);
+
+			saveAs(docxBlob, data.outputDocx);
+			saveAs(new Blob([xlsxBuffer], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), data.outputXlsx);
+		});
+	</script>
+</body>
+</html>
